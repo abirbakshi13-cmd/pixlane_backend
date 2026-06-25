@@ -1,33 +1,41 @@
 'use strict';
 
 const supabase = require('../../lib/supabase');
-const { corsHeaders, preflight } = require('./lib/cors');
-
-const MAX_NAME = 120;
-const MAX_MSG  = 2000;
+const { corsHeaders, resolveOrigin, preflight } = require('./lib/cors');
+const { contactSchema } = require('./lib/validate');
+const { isRateLimited, getClientIp } = require('./lib/ratelimit');
+const { verifyTurnstile } = require('./lib/turnstile');
 
 exports.handler = async (event) => {
   const pre = preflight(event);
   if (pre) return pre;
 
+  const origin = resolveOrigin(event);
+
   if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, headers: corsHeaders(), body: JSON.stringify({ error: 'Method not allowed' }) };
+    return r(405, 'Method not allowed', origin);
+  }
+
+  if (isRateLimited(getClientIp(event))) {
+    return r(429, 'Too many requests — please wait a few minutes before trying again', origin);
   }
 
   let body;
   try {
     body = JSON.parse(event.body || '{}');
   } catch {
-    return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Invalid JSON' }) };
+    return r(400, 'Invalid JSON', origin);
   }
 
-  const name    = (body.name    || '').trim();
-  const message = (body.message || '').trim();
+  const result = contactSchema.safeParse(body);
+  if (!result.success) {
+    return r(400, result.error.errors[0]?.message || 'Invalid input', origin);
+  }
+  const { name, message, turnstileToken } = result.data;
 
-  if (!name)                      return respond(400, 'name is required');
-  if (name.length > MAX_NAME)     return respond(400, `name must be ${MAX_NAME} characters or fewer`);
-  if (!message)                   return respond(400, 'message is required');
-  if (message.length > MAX_MSG)   return respond(400, `message must be ${MAX_MSG} characters or fewer`);
+  if (!await verifyTurnstile(turnstileToken)) {
+    return r(400, 'Human verification failed — please try again', origin);
+  }
 
   const { error } = await supabase
     .from('contacts')
@@ -35,16 +43,16 @@ exports.handler = async (event) => {
 
   if (error) {
     console.error('contact insert error:', error);
-    return respond(500, 'Failed to save message');
+    return r(500, 'Failed to save message', origin);
   }
 
   return {
     statusCode: 201,
-    headers: { ...corsHeaders(), 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders(origin), 'Content-Type': 'application/json' },
     body: JSON.stringify({ success: true }),
   };
 };
 
-function respond(statusCode, error) {
-  return { statusCode, headers: corsHeaders(), body: JSON.stringify({ error }) };
+function r(statusCode, error, origin) {
+  return { statusCode, headers: corsHeaders(origin), body: JSON.stringify({ error }) };
 }

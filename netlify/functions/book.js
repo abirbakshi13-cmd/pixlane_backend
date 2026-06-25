@@ -1,43 +1,39 @@
 'use strict';
 
-// POST /api/book
-// Body: { date, time, name, phone, biz, desc }
-// Inserts into `bookings`, creates a Google Calendar event, returns { success, bookingId }.
-// Returns 409 on unique-constraint violation (slot already taken).
-
 const supabase = require('../../lib/supabase');
-const { corsHeaders, preflight } = require('./lib/cors');
-const { createCalendarEvent }    = require('./lib/gcal');
+const { corsHeaders, resolveOrigin, preflight } = require('./lib/cors');
+const { createCalendarEvent } = require('./lib/gcal');
+const { bookSchema } = require('./lib/validate');
+const { isRateLimited, getClientIp } = require('./lib/ratelimit');
 
-const VALID_TIMES        = new Set(['10:00', '11:00', '14:00', '15:00', '16:00']);
 const PG_UNIQUE_VIOLATION = '23505';
 
 exports.handler = async (event) => {
   const pre = preflight(event);
   if (pre) return pre;
 
+  const origin = resolveOrigin(event);
+
   if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, headers: corsHeaders(), body: JSON.stringify({ error: 'Method not allowed' }) };
+    return r(405, 'Method not allowed', origin);
+  }
+
+  if (isRateLimited(getClientIp(event))) {
+    return r(429, 'Too many requests — please wait a few minutes before trying again', origin);
   }
 
   let body;
   try {
     body = JSON.parse(event.body || '{}');
   } catch {
-    return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Invalid JSON' }) };
+    return r(400, 'Invalid JSON', origin);
   }
 
-  const date  = (body.date  || '').trim();
-  const time  = (body.time  || '').trim();
-  const name  = (body.name  || '').trim();
-  const phone = (body.phone || '').trim();
-  const biz   = (body.biz   || '').trim();
-  const desc  = (body.desc  || '').trim();
-
-  if (!name)                                   return r(400, 'name is required');
-  if (!phone)                                  return r(400, 'phone is required');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date))      return r(400, 'invalid date format (expected YYYY-MM-DD)');
-  if (!VALID_TIMES.has(time))                  return r(400, 'invalid time slot');
+  const result = bookSchema.safeParse(body);
+  if (!result.success) {
+    return r(400, result.error.errors[0]?.message || 'Invalid input', origin);
+  }
+  const { date, time, name, phone, biz, desc } = result.data;
 
   const { data, error } = await supabase
     .from('bookings')
@@ -55,13 +51,13 @@ exports.handler = async (event) => {
 
   if (error) {
     if (error.code === PG_UNIQUE_VIOLATION) {
-      return r(409, 'That slot was just taken — please pick another time.');
+      return r(409, 'That slot was just taken — please pick another time.', origin);
     }
     console.error('book insert error:', error);
-    return r(500, 'Failed to save booking');
+    return r(500, 'Failed to save booking', origin);
   }
 
-  // Google Calendar — non-fatal: log the error but still return success
+  // Google Calendar — non-fatal: log but still return success
   try {
     const eventId = await createCalendarEvent(date, time, name, phone, biz, desc);
     await supabase
@@ -74,11 +70,11 @@ exports.handler = async (event) => {
 
   return {
     statusCode: 201,
-    headers: { ...corsHeaders(), 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders(origin), 'Content-Type': 'application/json' },
     body: JSON.stringify({ success: true, bookingId: data.id }),
   };
 };
 
-function r(statusCode, error) {
-  return { statusCode, headers: corsHeaders(), body: JSON.stringify({ error }) };
+function r(statusCode, error, origin) {
+  return { statusCode, headers: corsHeaders(origin), body: JSON.stringify({ error }) };
 }

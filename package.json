@@ -10,7 +10,8 @@
     "lint": "node --check netlify/functions/*.js lib/*.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.45.4"
+    "@supabase/supabase-js": "^2.45.4",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "dotenv": "^16.4.5",

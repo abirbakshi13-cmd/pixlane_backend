@@ -1,24 +1,24 @@
 'use strict';
 
-// GET /api/slots?week=N
-// Returns { taken: { 'YYYY-MM-DD': ['HH:MM', ...] } }
-// week=0 → current Mon–Fri, week=1 → next week, etc.
-
 const supabase = require('../../lib/supabase');
-const { corsHeaders, preflight } = require('./lib/cors');
+const { corsHeaders, resolveOrigin, preflight } = require('./lib/cors');
+const { slotsSchema } = require('./lib/validate');
 
 exports.handler = async (event) => {
   const pre = preflight(event);
   if (pre) return pre;
 
+  const origin = resolveOrigin(event);
+
   if (event.httpMethod !== 'GET') {
-    return { statusCode: 405, headers: corsHeaders(), body: JSON.stringify({ error: 'Method not allowed' }) };
+    return r(405, 'Method not allowed', origin);
   }
 
-  const week = parseInt((event.queryStringParameters || {}).week ?? '0', 10);
-  if (isNaN(week) || week < 0 || week > 52) {
-    return { statusCode: 400, headers: corsHeaders(), body: JSON.stringify({ error: 'Invalid week parameter' }) };
+  const result = slotsSchema.safeParse(event.queryStringParameters || {});
+  if (!result.success) {
+    return r(400, result.error.errors[0]?.message || 'Invalid week parameter', origin);
   }
+  const { week } = result.data;
 
   const monday = getWeekMonday(week);
   const friday = new Date(monday);
@@ -33,7 +33,7 @@ exports.handler = async (event) => {
 
   if (error) {
     console.error('slots query error:', error);
-    return { statusCode: 500, headers: corsHeaders(), body: JSON.stringify({ error: 'Failed to fetch slots' }) };
+    return r(500, 'Failed to fetch slots', origin);
   }
 
   // Group by date; normalise HH:MM:SS → HH:MM if Postgres returns with seconds
@@ -46,15 +46,19 @@ exports.handler = async (event) => {
 
   return {
     statusCode: 200,
-    headers: { ...corsHeaders(), 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders(origin), 'Content-Type': 'application/json' },
     body: JSON.stringify({ taken }),
   };
 };
 
+function r(statusCode, error, origin) {
+  return { statusCode, headers: corsHeaders(origin), body: JSON.stringify({ error }) };
+}
+
 function getWeekMonday(weeksOffset) {
-  const now  = new Date();
-  const day  = now.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
+  const now    = new Date();
+  const day    = now.getDay();
+  const diff   = day === 0 ? -6 : 1 - day;
   const monday = new Date(now);
   monday.setDate(now.getDate() + diff + weeksOffset * 7);
   monday.setHours(0, 0, 0, 0);

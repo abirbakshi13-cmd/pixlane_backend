@@ -13,3 +13,21 @@
   from   = "/*"
   to     = "/index.html"
   status = 200
+
+# Security headers on all responses (static + function)
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options    = "nosniff"
+    X-Frame-Options           = "DENY"
+    Referrer-Policy           = "strict-origin-when-cross-origin"
+    Permissions-Policy        = "geolocation=(), microphone=(), camera=()"
+    Strict-Transport-Security = "max-age=63072000; includeSubDomains; preload"
+    # CSP allows:
+    #   scripts  — same-origin (bundler chunks) + inline + Turnstile challenge
+    #   styles   — same-origin + inline + Google Fonts
+    #   fonts    — same-origin + Google Fonts CDN
+    #   images   — same-origin + data URIs + any https (QR codes, etc.)
+    #   connects — same-origin + any https (Supabase, API calls)
+    #   frames   — Cloudflare Turnstile iframe only
+    Content-Security-Policy   = "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https:; connect-src 'self' https:; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'"
