@@ -1,0 +1,15 @@
+[build]
+  publish   = "public"
+  functions = "netlify/functions"
+
+# Proxy /api/* → Netlify Functions so the HTML fetch URLs never change
+[[redirects]]
+  from   = "/api/:function"
+  to     = "/.netlify/functions/:function"
+  status = 200
+
+# Catch-all SPA fallback (serves index.html for any unmatched route)
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200
