@@ -1,0 +1,19 @@
+{
+  "name": "pixlane-backend",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "vercel dev",
+    "lint": "node --check api/*.js lib/*.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4"
+  },
+  "devDependencies": {
+    "dotenv": "^16.4.5",
+    "vercel": "^37.14.0"
+  }
+}
